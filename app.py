@@ -39,7 +39,7 @@ if st.sidebar.button("📦 Cargar ejemplo (coexistencia, 3 estrategias, 2 cohort
     for t in range(1,6):
         st.session_state[f"pres_{t}"]=0.0
         st.session_state[f"gasto_{t}"]=0.0
-    st.session_state["modelo_idx"]=1  # Modelo 2
+    st.session_state["modelo_sel"]="Modelo 2"  # Modelo 2
     # Shares por año (suman 1): desplazamiento gradual a Intervención
     for t in range(5):
         st.session_state[f"A_{t}_Comparador A"]=max(0.0, 0.6 - 0.1*t)
@@ -74,7 +74,11 @@ with st.sidebar:
         pres_key=f"pres_{t+1}"; gas_key=f"gasto_{t+1}"
         presu.append(st.number_input(f"Ingreso presupuestal año {t+1}", value=float(st.session_state.get(pres_key,0.0)), step=1000.0, key=pres_key))
         otros.append(st.number_input(f"Otros gastos año {t+1}", value=float(st.session_state.get(gas_key,0.0)), step=1000.0, key=gas_key))
-    modelo = st.selectbox("Modelo", ["Modelo 1","Modelo 2","Modelo 3","Modelo 4"], index=int(st.session_state.get("modelo_idx",1)), key="modelo_idx")
+    options = ["Modelo 1","Modelo 2","Modelo 3","Modelo 4"]
+    _default = st.session_state.get("modelo_sel", "Modelo 2")
+    if _default not in options:
+        _default = "Modelo 2"
+    modelo = st.selectbox("Modelo", options, index=options.index(_default), key="modelo_sel")
 
 st.subheader("1) Cohortes / Subgrupos (pesos)")
 n_coh = st.number_input("Número de cohortes", min_value=1, max_value=10, value=len(st.session_state.cohortes), step=1)
