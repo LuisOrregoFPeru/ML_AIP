@@ -52,10 +52,10 @@ class Inputs:
         for year in range(T):
             sA = sum(self.shares_actual[e][year] for e in self.shares_actual)
             sN = sum(self.shares_nuevo[e][year] for e in self.shares_nuevo)
-            if not np.isclose(sA,1.0): raise ValueError(f"shares_actual no suman 1 en año {year+1}")
-            if not np.isclose(sN,1.0): raise ValueError(f"shares_nuevo no suman 1 en año {year+1}")
+            if not np.isclose(sA,1.0, atol=1e-3): raise ValueError(f"shares_actual no suman 1 en año {year+1}")
+            if not np.isclose(sN,1.0, atol=1e-3): raise ValueError(f"shares_nuevo no suman 1 en año {year+1}")
         sw = sum(c.peso for c in self.cohortes)
-        if not np.isclose(sw,1.0): raise ValueError("La suma de pesos de cohortes debe ser 1.0")
+        if not np.isclose(sw,1.0, atol=1e-6): raise ValueError("La suma de pesos de cohortes debe ser 1.0")
 
 def _costo_promedio_por_escenario(ins: Inputs, shares: Dict[str,List[float]], cobertura: List[float]) -> np.ndarray:
     T = ins.horizonte

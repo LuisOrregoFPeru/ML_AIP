@@ -4,17 +4,34 @@ from aip.core import Inputs, Strategy, Cohorte, ejecutar_modelo
 from aip.sensitivity import dsa_univariado, psa_monte_carlo
 from aip.report import export_docx, export_pdf
 
-st.set_page_config(page_title="AIP-MINSA v2.1", page_icon="💸", layout="wide")
-st.title("AIP – Metodología MINSA (v2.1: formularios + PSA + subgrupos)")
+st.set_page_config(page_title="AIP-MINSA v2.2", page_icon="💸", layout="wide")
+st.title("AIP – Metodología MINSA (v2.2: formularios + validadores + PSA + subgrupos)")
 
-# Estado de sesión
+# --- Helpers visuales y normalización de shares ---
+def _badge(text, bg="#fee2e2", fg="#b91c1c"):
+    return f'<span style="display:inline-block;padding:2px 8px;border-radius:6px;background:{bg};color:{fg};font-weight:600;font-size:12px;border:1px solid rgba(0,0,0,0.05);">{text}</span>'
+
+def badge_ok(text): return _badge(text, bg="#dcfce7", fg="#166534")
+def badge_err(text): return _badge(text, bg="#fee2e2", fg="#b91c1c")
+
+def normalize_shares(shares_dict, year_index, estrategia_objetivo):
+    estrs = list(shares_dict.keys())
+    if estrategia_objetivo not in estrs:
+        estrategia_objetivo = estrs[-1]
+    total = sum(shares_dict[e][year_index] for e in estrs)
+    delta = 1.0 - total
+    shares_dict[estrategia_objetivo][year_index] = max(0.0, min(1.0, shares_dict[estrategia_objetivo][year_index] + delta))
+    # normalización suave si quedara fuera por redondeos
+    s = sum(shares_dict[e][year_index] for e in estrs)
+    if s > 0:
+        for e in estrs:
+            shares_dict[e][year_index] = shares_dict[e][year_index] / s
+
+# Estado inicial
 if "estrategias" not in st.session_state:
     st.session_state.estrategias = [Strategy("Comparador", 0.0, 0.0, 0.0), Strategy("Intervención", 0.0, 0.0, 0.0)]
 if "cohortes" not in st.session_state:
     st.session_state.cohortes = [Cohorte("General", 1.0)]
-if "shares_actual" not in st.session_state or "shares_nuevo" not in st.session_state:
-    st.session_state.shares_actual = {}
-    st.session_state.shares_nuevo = {}
 if "tabla" not in st.session_state:
     st.session_state.tabla = None
 if "fig_paths" not in st.session_state:
@@ -32,15 +49,13 @@ if st.sidebar.button("📦 Cargar ejemplo (coexistencia, 3 estrategias, 2 cohort
         Strategy("Comparador B", 900.0, 130.0, 35.0, {"Adultos (18-64)": 1.0, "Adultos mayores (65+)": 1.1}),
         Strategy("Intervención", 1100.0, 140.0, 40.0, {"Adultos (18-64)": 1.0, "Adultos mayores (65+)": 1.05}),
     ]
-    # Horizonte 5, población y coberturas
     for k,v in {"N_1":5000.0,"N_2":5200.0,"N_3":5400.0,"N_4":5600.0,"N_5":5800.0}.items(): st.session_state[k]=v
     for k in ["covA_","covN_"]:
         for t in range(1,6): st.session_state[f"{k}{t}"]=1.0
     for t in range(1,6):
         st.session_state[f"pres_{t}"]=0.0
         st.session_state[f"gasto_{t}"]=0.0
-    st.session_state["modelo_sel"]="Modelo 2"  # Modelo 2
-    # Shares por año (suman 1): desplazamiento gradual a Intervención
+    st.session_state["modelo_sel"]="Modelo 2"
     for t in range(5):
         st.session_state[f"A_{t}_Comparador A"]=max(0.0, 0.6 - 0.1*t)
         st.session_state[f"A_{t}_Comparador B"]=0.3
@@ -53,7 +68,7 @@ if st.sidebar.button("📦 Cargar ejemplo (coexistencia, 3 estrategias, 2 cohort
 
 with st.sidebar:
     st.header("Parámetros generales")
-    nombre_caso = st.text_input("Nombre del caso", value="Caso AIP v2.1")
+    nombre_caso = st.text_input("Nombre del caso", value="Caso AIP v2.2")
     horizonte = st.slider("Horizonte (años)", 1, 5, 5)
     N_t = []
     st.markdown("**Población objetivo (N_t)**")
@@ -76,8 +91,7 @@ with st.sidebar:
         otros.append(st.number_input(f"Otros gastos año {t+1}", value=float(st.session_state.get(gas_key,0.0)), step=1000.0, key=gas_key))
     options = ["Modelo 1","Modelo 2","Modelo 3","Modelo 4"]
     _default = st.session_state.get("modelo_sel", "Modelo 2")
-    if _default not in options:
-        _default = "Modelo 2"
+    if _default not in options: _default = "Modelo 2"
     modelo = st.selectbox("Modelo", options, index=options.index(_default), key="modelo_sel")
 
 st.subheader("1) Cohortes / Subgrupos (pesos)")
@@ -91,26 +105,14 @@ for i in range(n_coh):
 st.session_state.cohortes = cohortes
 st.caption("La suma de pesos debe ser 1.0")
 
-st.subheader("2) Estrategias (comparadores, intervención, secuencias)")
-n_est = st.number_input("Número de estrategias", min_value=2, max_value=8, value=len(st.session_state.estrategias), step=1)
-estrategias = []
-for i in range(n_est):
-    with st.expander(f"Estrategia {i+1}"):
-        default = st.session_state.estrategias[i] if i<len(st.session_state.estrategias) else None
-        nombre = st.text_input("Nombre", value=(default.nombre if default else f"Estrategia {i+1}"), key=f"est_nom_{i}")
-        costo_ts = st.number_input("Costo TS por paciente/año", value=(default.costo_ts if default else 0.0), step=100.0, key=f"est_cts_{i}")
-        costo_proc = st.number_input("Costo procedimientos por paciente/año", value=(default.costo_procedimientos if default else 0.0), step=50.0, key=f"est_cpr_{i}")
-        costo_ea = st.number_input("Costo eventos adversos por paciente/año", value=(default.costo_eventos if default else 0.0), step=50.0, key=f"est_cea_{i}")
-        mult = {}
-        st.markdown("**Multiplicadores de costo por cohorte (opcional)**")
-        for coh in cohortes:
-            mult[coh.nombre] = st.number_input(f"× {coh.nombre}", value=1.0, min_value=0.0, step=0.05, key=f"mult_{i}_{coh.nombre}")
-        estrategias.append(Strategy(nombre, float(costo_ts), float(costo_proc), float(costo_ea), mult))
-st.session_state.estrategias = estrategias
-
-st.subheader("3) Participaciones de mercado por año")
+# --- Sección de shares con badges y autocompletar ---
+st.subheader("2) Participaciones de mercado por año")
+estrategias = st.session_state.estrategias
 shares_actual = {e.nombre:[0.0]*len(N_t) for e in estrategias}
 shares_nuevo  = {e.nombre:[0.0]*len(N_t) for e in estrategias}
+tolerancia = 1e-3
+any_invalid = False
+
 for t in range(len(N_t)):
     st.markdown(f"**Año {t+1}**")
     cols = st.columns(len(estrategias))
@@ -118,56 +120,96 @@ for t in range(len(N_t)):
     for i,e in enumerate(estrategias):
         with cols[i]:
             keyA=f"A_{t}_{e.nombre}"; keyN=f"N_{t}_{e.nombre}"
-            shares_actual[e.nombre][t] = st.number_input(f"{e.nombre} (actual)", min_value=0.0, max_value=1.0, value=float(st.session_state.get(keyA,0.0)), step=0.05, key=keyA)
-            shares_nuevo[e.nombre][t]  = st.number_input(f"{e.nombre} (nuevo)",  min_value=0.0, max_value=1.0, value=float(st.session_state.get(keyN,0.0)), step=0.05, key=keyN)
+            shares_actual[e.nombre][t] = st.number_input(
+                f"{e.nombre} (actual)", min_value=0.0, max_value=1.0,
+                value=float(st.session_state.get(keyA,0.0)), step=0.05, key=keyA
+            )
+            shares_nuevo[e.nombre][t]  = st.number_input(
+                f"{e.nombre} (nuevo)",  min_value=0.0, max_value=1.0,
+                value=float(st.session_state.get(keyN,0.0)), step=0.05, key=keyN
+            )
             sumaA += shares_actual[e.nombre][t]
             sumaN += shares_nuevo[e.nombre][t]
-    st.caption(f"Suma actual={sumaA:.2f} | Suma nuevo={sumaN:.2f} (deben ser 1.00)")
+
+    colA, colB, colC, colD = st.columns([1.2,1.2,1,1])
+    with colA:
+        if np.isclose(sumaA, 1.0, atol=tolerancia):
+            st.markdown(badge_ok(f"Actual: suma {sumaA:.2f} ✓"), unsafe_allow_html=True)
+        else:
+            any_invalid = True
+            st.markdown(badge_err(f"Actual: suma {sumaA:.2f} → falta {1.00 - sumaA:+.2f}"), unsafe_allow_html=True)
+    with colB:
+        if np.isclose(sumaN, 1.0, atol=tolerancia):
+            st.markdown(badge_ok(f"Nuevo: suma {sumaN:.2f} ✓"), unsafe_allow_html=True)
+        else:
+            any_invalid = True
+            st.markdown(badge_err(f"Nuevo: suma {sumaN:.2f} → falta {1.00 - sumaN:+.2f}"), unsafe_allow_html=True)
+
+    with colC:
+        objetivoA = st.selectbox(f"Ajustar en (actual) Año {t+1}", [e.nombre for e in estrategias], key=f"ajA_{t}")
+    with colD:
+        objN = st.selectbox(f"Ajustar en (nuevo) Año {t+1}", [e.nombre for e in estrategias], key=f"ajN_{t}")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button(f"Autocompletar Actual Año {t+1}", key=f"autoA_{t}"):
+            normalize_shares(shares_actual, t, objetivoA)
+            for e in estrategias:
+                st.session_state[f"A_{t}_{e.nombre}"] = shares_actual[e.nombre][t]
+            st.experimental_rerun()
+    with c2:
+        if st.button(f"Autocompletar Nuevo Año {t+1}", key=f"autoN_{t}"):
+            normalize_shares(shares_nuevo, t, objN)
+            for e in estrategias:
+                st.session_state[f"N_{t}_{e.nombre}"] = shares_nuevo[e.nombre][t]
+            st.experimental_rerun()
 
 st.session_state.shares_actual = shares_actual
-st.session_state.shares_nuevo = shares_nuevo
+st.session_state.shares_nuevo  = shares_nuevo
 
-st.subheader("4) Ejecutar modelo")
-if st.button("Calcular AIP"):
-    ins = Inputs(
-        nombre_caso=nombre_caso,
-        horizonte=len(N_t),
-        poblacion_objetivo=N_t,
-        cohortes=cohortes,
-        estrategias=estrategias,
-        shares_actual=shares_actual,
-        shares_nuevo=shares_nuevo,
-        cobertura_actual=cobertura_actual,
-        cobertura_nuevo=cobertura_nuevo,
-        saldo_inicial=saldo0,
-        presupuesto_anual=presu,
-        otros_gastos_anuales=otros
-    )
-    try:
-        res = ejecutar_modelo(modelo, ins)
-        st.session_state.tabla = res["tabla"]
-        st.success(f"AIP acumulado: S/ {res['AIP_total']:.0f} | SPF final: S/ {res['SPF_final']:.0f}")
-        st.dataframe(res["tabla"], use_container_width=True)
-        df = res["tabla"]
-        fig1 = px.line(df, x="Año", y=["Costo agregado (Actual)","Costo agregado (Nuevo)"], title="Costos agregados por escenario", markers=True)
-        st.plotly_chart(fig1, use_container_width=True)
-        fig2 = px.bar(df, x="Año", y="Impacto Incremental (AIP)", title="Impacto Presupuestal Incremental")
-        st.plotly_chart(fig2, use_container_width=True)
-        fig3 = px.line(df, x="Año", y="SPF", title="Saldo Presupuestal Final (SPF)", markers=True)
-        st.plotly_chart(fig3, use_container_width=True)
-        # Guardar imágenes
-        import os
-        os.makedirs("reports", exist_ok=True)
-        fig_paths = {}
-        for name,fig in {"Costos":fig1,"AIP":fig2,"SPF":fig3}.items():
-            p = f"reports/{name}.png"
-            fig.write_image(p, format="png")
-            fig_paths[name]=p
-        st.session_state.fig_paths = fig_paths
-    except Exception as e:
-        st.error(str(e))
+st.subheader("3) Ejecutar modelo")
+if any_invalid:
+    st.error("Hay años en los que las participaciones de mercado **no suman 1.00**. Usa *Autocompletar* o ajusta manualmente (badges en rojo).")
+else:
+    if st.button("Calcular AIP"):
+        ins = Inputs(
+            nombre_caso=nombre_caso,
+            horizonte=len(N_t),
+            poblacion_objetivo=N_t,
+            cohortes=cohortes,
+            estrategias=estrategias,
+            shares_actual=shares_actual,
+            shares_nuevo=shares_nuevo,
+            cobertura_actual=cobertura_actual,
+            cobertura_nuevo=cobertura_nuevo,
+            saldo_inicial=saldo0,
+            presupuesto_anual=presu,
+            otros_gastos_anuales=otros
+        )
+        try:
+            res = ejecutar_modelo(modelo, ins)
+            st.session_state.tabla = res["tabla"]
+            st.success(f"AIP acumulado: S/ {res['AIP_total']:.0f} | SPF final: S/ {res['SPF_final']:.0f}")
+            st.dataframe(res["tabla"], use_container_width=True)
+            df = res["tabla"]
+            fig1 = px.line(df, x="Año", y=["Costo agregado (Actual)","Costo agregado (Nuevo)"], title="Costos agregados por escenario", markers=True)
+            st.plotly_chart(fig1, use_container_width=True)
+            fig2 = px.bar(df, x="Año", y="Impacto Incremental (AIP)", title="Impacto Presupuestal Incremental")
+            st.plotly_chart(fig2, use_container_width=True)
+            fig3 = px.line(df, x="Año", y="SPF", title="Saldo Presupuestal Final (SPF)", markers=True)
+            st.plotly_chart(fig3, use_container_width=True)
+            import os
+            os.makedirs("reports", exist_ok=True)
+            fig_paths = {}
+            for name,fig in {"Costos":fig1,"AIP":fig2,"SPF":fig3}.items():
+                p = f"reports/{name}.png"
+                fig.write_image(p, format="png")
+                fig_paths[name]=p
+            st.session_state.fig_paths = fig_paths
+        except Exception as e:
+            st.error(str(e))
 
-st.subheader("5) Sensibilidad determinística (DSA)")
+st.subheader("4) Sensibilidad determinística (DSA)")
 with st.expander("Configurar y ejecutar"):
     variaciones = {}
     for e in estrategias:
@@ -194,7 +236,7 @@ with st.expander("Configurar y ejecutar"):
         figt = px.bar(df_dsa, x="Delta", y="Parámetro", orientation="h", title="Diagrama Tornado (AIP total)")
         st.plotly_chart(figt, use_container_width=True)
 
-st.subheader("6) Sensibilidad probabilística (PSA)")
+st.subheader("5) Sensibilidad probabilística (PSA)")
 with st.expander("Configurar y ejecutar PSA"):
     nsims = st.number_input("Número de simulaciones", min_value=100, max_value=20000, value=2000, step=100)
     st.markdown("**Gamma (k, θ) para costos por paciente**")
@@ -246,7 +288,7 @@ with st.expander("Configurar y ejecutar PSA"):
         st.write("Percentiles AIP_total (P2.5, P50, P97.5)")
         st.dataframe(q, use_container_width=True)
 
-st.subheader("7) Exportar informe (DOCX/PDF)")
+st.subheader("6) Exportar informe (DOCX/PDF)")
 titulo = st.text_input("Título del informe", value="Informe AIP – Metodología MINSA")
 resumen = st.text_area("Resumen ejecutivo", value="Resumen breve del caso, supuestos, horizonte, resultados y conclusiones.")
 colA, colB = st.columns(2)

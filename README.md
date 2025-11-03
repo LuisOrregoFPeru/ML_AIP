@@ -1,11 +1,13 @@
-# AIP-MINSA v2.1 (Streamlit): Formularios + PSA + Subgrupos + Reporte
+# AIP-MINSA v2.2 (Streamlit): Formularios + Validadores visuales + PSA + Subgrupos + Reporte
 
 - **Ingreso por formularios** (sin Excel).
-- **Múltiples estrategias/comparadores** y **secuencias terapéuticas**.
-- **Cohortes por subgrupos** y agregación ponderada.
-- **DSA** + **PSA (Gamma, Dirichlet, Lognormal RR)**.
-- **Exportación** DOCX y PDF con tablas y gráficos.
-- **Botón de demo** para cargar un caso de ejemplo (Modelo 2, 3 estrategias, 2 cohortes).
+- **Validadores visuales** por año para que las participaciones sumen **1.00** (badges rojos/verdes).
+- Botones de **Autocompletar** faltante/sobrante por estrategia y por año.
+- **Múltiples estrategias/comparadores** y **secuencias**.
+- **Cohortes** con agregación ponderada.
+- **DSA** + **PSA** (Gamma, Dirichlet, Lognormal RR).
+- **Exportación** DOCX + PDF.
+- **Botón demo** (Modelo 2, 3 estrategias, 2 cohortes).
 
 ## Uso
 ```bash
